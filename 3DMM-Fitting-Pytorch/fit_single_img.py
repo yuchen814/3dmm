@@ -9,6 +9,7 @@ import torch
 import core.utils as utils
 from tqdm import tqdm
 import core.losses as losses
+from scipy.io import loadmat, savemat
 
 
 def fit(args):
@@ -17,6 +18,9 @@ def fit(args):
     mtcnn = MTCNN(device=args.device, select_largest=False)
     fa = face_alignment.FaceAlignment(
         face_alignment.LandmarksType._3D, flip_input=False)
+    #recon_model:bfm09
+    #tar_size:256
+    #model_dict:['__header__', '__version__', '__globals__', 'meanshape', 'meantex', 'idBase', 'exBase', 'texBase', 'tri', 'point_buf',      #'tri_mask2', 'keypoints', 'frontmask2_idx', 'skinmask'])
     recon_model = get_recon_model(model=args.recon_model,
                                   device=args.device,
                                   batch_size=1,
@@ -90,6 +94,9 @@ def fit(args):
         id_reg_loss = losses.get_l2(recon_model.get_id_tensor())
         exp_reg_loss = losses.get_l2(recon_model.get_exp_tensor())
         tex_reg_loss = losses.get_l2(recon_model.get_tex_tensor())
+#---------------------------------------------------------------------------------------------------------------------
+        #(yuchen)I commented out tex_loss_val
+        print('1111111111111111111111111111111111111')
         tex_loss_val = losses.reflectance_loss(
             face_texture, recon_model.get_skinmask())
 
@@ -97,25 +104,25 @@ def fit(args):
             id_reg_loss*args.id_reg_w + \
             exp_reg_loss*args.exp_reg_w + \
             tex_reg_loss*args.tex_reg_w + \
-            tex_loss_val*args.tex_w + \
             photo_loss_val*args.rgb_loss_w
-
+# tex_loss_val*args.tex_w + \
         loss.backward()
         nonrigid_optimizer.step()
 
     loss_str = ''
     loss_str += 'lm_loss: %f\t' % lm_loss_val.detach().cpu().numpy()
     loss_str += 'photo_loss: %f\t' % photo_loss_val.detach().cpu().numpy()
-    loss_str += 'tex_loss: %f\t' % tex_loss_val.detach().cpu().numpy()
+    # loss_str += 'tex_loss: %f\t' % tex_loss_val.detach().cpu().numpy()
     loss_str += 'id_reg_loss: %f\t' % id_reg_loss.detach().cpu().numpy()
     loss_str += 'exp_reg_loss: %f\t' % exp_reg_loss.detach().cpu().numpy()
     loss_str += 'tex_reg_loss: %f\t' % tex_reg_loss.detach().cpu().numpy()
     print('done non rigid fitting.', loss_str)
-
+#-------------------------------------------------------------------------------------------------------------------------------
     with torch.no_grad():
         coeffs = recon_model.get_packed_tensors()
         pred_dict = recon_model(coeffs, render=True)
         rendered_img = pred_dict['rendered_img']
+        print(pred_dict.keys())
         rendered_img = rendered_img.cpu().numpy().squeeze()
         out_img = rendered_img[:, :, :3].astype(np.uint8)
         out_mask = (rendered_img[:, :, 3] > 0).astype(np.uint8)
@@ -134,18 +141,39 @@ def fit(args):
         out_composed_img_path = os.path.join(
             args.res_folder, basename + '_composed_img.jpg')
         cv2.imwrite(out_composed_img_path, composed_img[:, :, ::-1])
+        #自己改的
+        out_composed_img_path = os.path.join(
+            args.res_folder, basename + '_out_img.jpg')
+        cv2.imwrite(out_composed_img_path, out_img[:, :, ::-1])
+        out_composed_img_path = os.path.join(
+            args.res_folder, basename + '_face_img.jpg')
+        cv2.imwrite(out_composed_img_path, face_img[:, :, ::-1])
+        out_composed_img_path = os.path.join(
+            args.res_folder, basename + '_resized_face_img.jpg')
+        cv2.imwrite(out_composed_img_path, resized_face_img[:, :, ::-1])
+        #--------------------------------------------------------------------------------------
         # save the coefficients
         out_coeff_path = os.path.join(
             args.res_folder, basename + '_coeffs.npy')
         np.save(out_coeff_path,
                 coeffs.detach().cpu().numpy().squeeze())
-
+        #自己改的
+        print(pred_dict['color'].shape)
+        print(pred_dict['vs'].shape)
+        print(pred_dict['tri'].shape)
+        #-------------------------------------------------------------------------------------------
         # save the mesh into obj format
         out_obj_path = os.path.join(
-            args.res_folder, basename+'_mesh.obj')
+            args.res_folder, basename+'_mesh_without_tex_val_loss.obj')
         vs = pred_dict['vs'].cpu().numpy().squeeze()
         tri = pred_dict['tri'].cpu().numpy().squeeze()
         color = pred_dict['color'].cpu().numpy().squeeze()
+        
+        
+        path = "BFM/color.mat"
+        savemat(path, {'color': color})
+        print(color.shape)
+        print(color)
         utils.save_obj(out_obj_path, vs, tri+1, color)
 
         print('composed image is saved at %s' % args.res_folder)

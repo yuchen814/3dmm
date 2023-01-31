@@ -1,6 +1,7 @@
 from scipy.io import loadmat, savemat
 import numpy as np
 from array import array
+import torch
 
 # load expression basis
 
@@ -27,7 +28,13 @@ def LoadExpBasis():
 
 
 def transferBFM09():
-    original_BFM = loadmat('BFM/01_MorphableModel.mat')
+    #--------------------------------------------------------------------------------------------------------------------------------
+    #(yuchen) I change their model to model in face3d which contains 53215 points
+    original_BFM = loadmat('BFM/BFM.mat')
+    original_BFM = original_BFM['model']
+    original_BFM = original_BFM[0,0]
+    # print(original_BFM.keys())
+    #---------------------------------------------------------------------------------------------------------------------------------
     shapePC = original_BFM['shapePC']  # shape basis
     shapeEV = original_BFM['shapeEV']  # corresponding eigen value
     shapeMU = original_BFM['shapeMU']  # mean face
@@ -41,58 +48,79 @@ def transferBFM09():
 
     idBase = shapePC*np.reshape(shapeEV, [-1, 199])
     idBase = idBase/1e5  # unify the scale to decimeter
-    idBase = idBase[:, :80]  # use only first 80 basis
+    idBase = idBase[:, :80]  # use only first 80 basis (80 to 199)
 
     exBase = expPC*np.reshape(expEV, [-1, 79])
     exBase = exBase/1e5  # unify the scale to decimeter
     exBase = exBase[:, :64]  # use only first 64 basis
 
     texBase = texPC*np.reshape(texEV, [-1, 199])
-    texBase = texBase[:, :80]  # use only first 80 basis
+    texBase = texBase[:, :80]  # use only first 80 basis  (80 to 199)
+    print('texBase:'+str(texBase.shape))
 
     # our face model is cropped align face landmarks which contains only 35709 vertex.
     # original BFM09 contains 53490 vertex, and expression basis provided by JuYong contains 53215 vertex.
     # thus we select corresponding vertex to get our face model.
 
+#---------------------------------------------------------------------------------------------------------------------------------------
     index_exp = loadmat('BFM/BFM_front_idx.mat')
     index_exp = index_exp['idx'].astype(
-        np.int32) - 1  # starts from 0 (to 53215)
+        np.int32) -1  # starts from 0 (to 53215)
+#(yuchen)The original index was changed from 0-35709 to 53215
+    index_exp = np.arange(0,53215,1)
+    index_exp = np.array(index_exp).reshape(len(index_exp),1)
 
     index_shape = loadmat('BFM/BFM_exp_idx.mat')
     index_shape = index_shape['trimIndex'].astype(
         np.int32) - 1  # starts from 0 (to 53490)
     index_shape = index_shape[index_exp]
 
+#(yuchen)The length of various bases here is 53215, so I think we can select all without selecting, But now I think it may be wrong here
     idBase = np.reshape(idBase, [-1, 3, 80])
-    idBase = idBase[index_shape, :, :]
+    # idBase = idBase[index_shape, :, :]
     idBase = np.reshape(idBase, [-1, 80])
 
     texBase = np.reshape(texBase, [-1, 3, 80])
-    texBase = texBase[index_shape, :, :]
+    # texBase = texBase[index_shape, :, :]
     texBase = np.reshape(texBase, [-1, 80])
+    print('texBase:'+str(texBase.shape))
 
     exBase = np.reshape(exBase, [-1, 3, 64])
     exBase = exBase[index_exp, :, :]
     exBase = np.reshape(exBase, [-1, 64])
 
     meanshape = np.reshape(shapeMU, [-1, 3])/1e5
-    meanshape = meanshape[index_shape, :]
+    # meanshape = meanshape[index_shape, :]
     meanshape = np.reshape(meanshape, [1, -1])
 
     meantex = np.reshape(texMU, [-1, 3])
-    meantex = meantex[index_shape, :]
+    # meantex = meantex[index_shape, :]
     meantex = np.reshape(meantex, [1, -1])
 
     # other info contains triangles, region used for computing photometric loss,
     # region used for skin texture regularization, and 68 landmarks index etc.
+    
+    #(yuchen)This is his facemodel. The vertex is 35709,I used matlab to reconstruct some data, including tri and point_ buf.
+    #(yuchen)Skinmask is used to calculate tex_ loss_ Val, I haven't found a way to reconstruct this data
     other_info = loadmat('BFM/facemodel_info.mat')
+    point_buf_info = loadmat('BFM/point_buf.mat')#我自己加的
+    skinmask = loadmat('BFM/skinmask.mat')
+    tri_info = loadmat('BFM/tri.mat')
+    
     frontmask2_idx = other_info['frontmask2_idx']
-    skinmask = other_info['skinmask']
+    # skinmask = other_info['skinmask']
+    skinmask = skinmask['skin_mask']
+    print(skinmask.shape)
     keypoints = other_info['keypoints']
-    point_buf = other_info['point_buf']
-    tri = other_info['tri']
-    tri_mask2 = other_info['tri_mask2']
 
+    point_buf = point_buf_info['point_buf']
+    
+    tri = other_info['tri']
+    tri = tri_info['tri'] #(3, 105840)
+    tri = tri.transpose() #(105840, 3)
+
+    tri_mask2 = other_info['tri_mask2']
+    # ------------------------------------------------------------------------------------------------------------
     # save our face model
     savemat('BFM/BFM09_model_info.mat', {'meanshape': meanshape, 'meantex': meantex, 'idBase': idBase, 'exBase': exBase, 'texBase': texBase,
                                          'tri': tri, 'point_buf': point_buf, 'tri_mask2': tri_mask2, 'keypoints': keypoints, 'frontmask2_idx': frontmask2_idx, 'skinmask': skinmask})
